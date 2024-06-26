@@ -122,32 +122,48 @@ class BettingSimulation:
 
     def summarize_results(self, final_bankrolls):
         """
-        Summarizes the results of the betting simulations by computing the average, min, max,
-        count of bankrolls greater than 1, and an adjusted average that excludes outliers.
-        
         Parameters:
             final_bankrolls (list): List of final bankroll amounts from each simulation.
         
         Returns:
-            dict: Summary statistics including average, min, max, count > 1, and adjusted average.
+            dict: Summary statistics...
         """
-        average = np.mean(final_bankrolls)
-        minimum = np.min(final_bankrolls)
-        maximum = np.max(final_bankrolls)
-        count_gt_one = np.sum(np.array(final_bankrolls) > 1)
-
+        
         q25, q75 = np.percentile(final_bankrolls, [25, 75])
         iqr = q75 - q25
         lower_bound = q25 - 1.5 * iqr
         upper_bound = q75 + 1.5 * iqr
         adjusted_bankrolls = [x for x in final_bankrolls if lower_bound <= x <= upper_bound]
+
+        average = np.mean(final_bankrolls)
+        median = np.median(final_bankrolls)
+        minimum = np.min(final_bankrolls)
+        maximum = np.max(final_bankrolls)
+        variance = np.var(adjusted_bankrolls)
+        std_dev = np.std(adjusted_bankrolls)
+        
+        bkt_lt_0_5 = np.mean(np.array(final_bankrolls) < 0.5)
+        bkt_0_5_to_1 = np.mean((np.array(final_bankrolls) >= 0.5) & (np.array(final_bankrolls) < 1))
+        bkt_1_to_2 = np.mean((np.array(final_bankrolls) >= 1) & (np.array(final_bankrolls) < 2))
+        bkt_2_to_4 = np.mean((np.array(final_bankrolls) >= 2) & (np.array(final_bankrolls) < 4))
+        bkt_gt_4 = np.mean(np.array(final_bankrolls) >= 4)
+        bkt_gt_1 = np.mean(np.array(final_bankrolls) > 1)  
+
         adjusted_average = np.mean(adjusted_bankrolls) if adjusted_bankrolls else None
 
         return {
             'average': average,
+            'median': median,
             'minimum': minimum,
             'maximum': maximum,
-            'count > 1': count_gt_one,
+            'variance': variance,
+            'standard deviation': std_dev,
+            'bucket (p < 0.5)': bkt_lt_0_5,
+            'bucket (0.5 < p < 1)': bkt_0_5_to_1,
+            'bucket (1 < p < 2)': bkt_1_to_2,
+            'bucket (2 < p < 4)': bkt_2_to_4,
+            'bucket (p > 4)': bkt_gt_4,
+            'bucket (p > 1)': bkt_gt_1,
             'adjusted average': adjusted_average
         }
 
@@ -159,7 +175,7 @@ mean_val = 0.5              # mean value for generating base probabilities
 stddev = 0.13               # standard deviation for generating real probabilities
 betdev = 0.025              # standard deviation for bettor's probabilities (generated off real probabilities)
 bookdev = 0.05              # standard deviation for bookmaker's probabilities (generated off bookmakers probabilities)
-fraction_kelly = 0.8        # fraction of the Kelly criterion to be used
+fraction_kelly = 0.3        # fraction of the Kelly criterion to be used
 num_simulations = 1000      # number of simulations to run
 flag = False                # flag to indicate if conjugate probabilities and corresponding payout are NOT used 
 
@@ -180,37 +196,6 @@ final_bankrolls = simulation.perform_simulations(num_simulations)
 summary = simulation.summarize_results(final_bankrolls)
 summary
 
-num_bets = 1230             # equivalent to the number of events per simulation
-a = 0.01                    # lower bound for generating probabilities
-b = 0.09                    # upper bound for generating probabilities
-k = 0.1                     # bookmaker's margin
-mean_val = 0.05             # mean value for generating base probabilities
-stddev = 0.013              # standard deviation for generating real probabilities
-betdev = 0.005              # standard deviation for bettor's probabilities (generated off real probabilities)
-bookdev = 0.010             # standard deviation for bookmaker's probabilities (generated off bookmakers probabilities)
-fraction_kelly = 0.3        # fraction of the Kelly criterion to be used
-num_simulations = 1000      # number of simulations to run
-flag = True                 # flag to indicate whether conjugate probabilities and corresponding payout are used
-
-simulation = BettingSimulation(
-    num_bets = num_bets,
-    a = a,
-    b = b,
-    k = k,
-    mean_val = mean_val,
-    stddev = stddev,
-    betdev = betdev,
-    bookdev = bookdev,
-    fraction_kelly = fraction_kelly,
-    flag = flag
-)
-
-final_bankrolls = simulation.perform_simulations(num_simulations)
-summary = simulation.summarize_results(final_bankrolls)
-summary
-
-
-
 def run_kelly_variation_simulation():
     num_bets = 1230
     a = 0.1
@@ -223,8 +208,8 @@ def run_kelly_variation_simulation():
     num_simulations = 1000
     flag = False
 
-    kelly_values = np.arange(0.1, 0.82, 0.02)  
-    adjusted_averages = []
+    kelly_values = np.arange(0.1, 0.82, 0.02)
+    res = {}
 
     for fraction_kelly in kelly_values:
         simulation = BettingSimulation(
@@ -241,14 +226,27 @@ def run_kelly_variation_simulation():
         )
         final_bankrolls = simulation.perform_simulations(num_simulations)
         summary = simulation.summarize_results(final_bankrolls)
-        adjusted_averages.append(summary.get('adjusted average', 0))  
+        res[f"{fraction_kelly:.2f}"] = summary
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(kelly_values, adjusted_averages, marker='o', linestyle='-', color='blue')
-    plt.title('Adjusted Average Bankroll by Fraction Kelly')
-    plt.xlabel('Fraction Kelly')
-    plt.ylabel('Adjusted Average Bankroll')
-    plt.grid(True)
+    plot_summary_statistics(res)
+    return res
+
+def plot_summary_statistics(res):
+    plt.figure(figsize=(20, 32))  
+    num_plots = len(next(iter(res.values())))
+    cols = 2  
+    rows = num_plots // cols + (num_plots % cols > 0)
+    kelly_values = [float(k) for k in res.keys()]
+
+    for i, key in enumerate(next(iter(res.values())).keys(), start=1):
+        values = [res[k][key] for k in res]
+        ax = plt.subplot(rows, cols, i)
+        ax.plot(kelly_values, values, linestyle='-', color='blue', linewidth=2)  
+        ax.set_title(f'{key} by Fraction Kelly', fontsize=14)  
+        ax.set_xlabel('Fraction Kelly', fontsize=12)  
+        ax.set_ylabel(key, fontsize=12)  
+        ax.grid(True)
+        ax.tick_params(axis='both', which='major', labelsize=10)  
+
+    plt.tight_layout()  
     plt.show()
-
-run_kelly_variation_simulation()
