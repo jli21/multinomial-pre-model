@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.metrics import log_loss
 
 class BettingSimulation:
     """
@@ -41,6 +42,9 @@ class BettingSimulation:
     def mod_probs(self, base_probs, stddev):
         return np.clip(np.random.normal(base_probs, stddev), self.a, self.b)
 
+    def simulate_outcomes(self, probabilities):
+        return np.random.binomial(1, probabilities)
+    
     def kelly_criterion(self, prob, odds):
         b = odds - 1
         q = 1 - prob
@@ -48,14 +52,17 @@ class BettingSimulation:
             return 0
         f = (b * prob - q) / b
         return self.fraction_kelly * f if f > 0 else 0
-
-    def simulate_bets(self, real_probs, bettor_probs, booker_probs):
+    
+    def calculate_log_loss(self, outcomes, pred_prob):
+        return log_loss(outcomes, pred_prob)
+    
+    def simulate_bets(self, outcomes, bettor_probs, booker_probs):
         bankroll = 1
         bankroll_history = [bankroll]
         for i in range(self.num_bets):
             payout_win = self.calc_payouts(booker_probs[i])
             f_win = self.kelly_criterion(bettor_probs[i], payout_win)
-            event_outcome = np.random.random() < real_probs[i]
+            event_outcome = outcomes[i]
 
             if self.flag:
                 if f_win > 0:
@@ -74,20 +81,74 @@ class BettingSimulation:
             bankroll_history.append(bankroll)
         return bankroll_history
     
+    def simulate_constant_probs(self, num_simulations):
+        real_probs = self.gen_probs()  
+        booker_probs = self.mod_probs(real_probs, self.bookdev)  
+
+        log_losses = []
+        final_bankrolls = []
+
+        for _ in range(num_simulations):
+            bettor_probs = self.mod_probs(real_probs, self.betdev)  
+            outcomes = self.simulate_outcomes(real_probs)
+            bankroll_history = self.simulate_bets(outcomes, bettor_probs, booker_probs)
+            final_bankrolls.append(bankroll_history[-1])
+            log_losses.append(self.calculate_log_loss(outcomes, bettor_probs))
+
+        return log_losses, final_bankrolls
+
+    def plot_log_loss_vs_bankroll(self, log_losses, final_bankrolls, thre=5):
+        q25, q75 = np.percentile(final_bankrolls, [25, 75])
+        iqr = q75 - q25
+        lower_bound = q25 - 1.5 * iqr
+        upper_bound = q75 + 1.5 * iqr
+        
+        filtered_indices = [i for i, x in enumerate(final_bankrolls) if lower_bound <= x <= upper_bound]
+        filtered_log_losses = [log_losses[i] for i in filtered_indices]
+        filtered_bankrolls = [final_bankrolls[i] for i in filtered_indices]
+        
+        plt.figure(figsize=(10, 5))
+        plt.scatter(filtered_log_losses, filtered_bankrolls, alpha=0.5, label='Filtered Simulations')
+        
+        num_bins = 100
+        bins = np.linspace(min(filtered_log_losses), max(filtered_log_losses), num_bins)
+        bin_indices = np.digitize(filtered_log_losses, bins)
+        
+        averages = []
+        mid_points = []
+        for i in range(1, len(bins)):
+            bin_data = [filtered_bankrolls[j] for j in range(len(filtered_bankrolls)) if bin_indices[j] == i]
+            if len(bin_data) >= thre:
+                averages.append(np.mean(bin_data))
+                mid_points.append(0.5 * (bins[i-1] + bins[i]))
+
+        if averages:
+            plt.plot(mid_points, averages, 'r-', linewidth=2, label='Average Bankroll (Excluding Outliers)')
+
+        plt.axhline(y=1, color='g', linestyle='--', label='Break-even Line')
+        
+        plt.title('Log Loss vs Final Bankroll (Excluding Outliers)')
+        plt.xlabel('Log Loss')
+        plt.ylabel('Final Bankroll ($)')
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+    
     def perform_simulations(self, num_simulations):
         final_bankrolls = []
         for _ in range(num_simulations):
             real_probs = self.gen_probs()
             bettor_probs = self.mod_probs(real_probs, self.betdev)
             booker_probs = self.mod_probs(real_probs, self.bookdev)
+            outcomes = self.simulate_outcomes(real_probs)
 
-            bankroll_history = self.simulate_bets(real_probs, bettor_probs, booker_probs)
+            bankroll_history = self.simulate_bets(outcomes, bettor_probs, booker_probs)
             final_bankrolls.append(bankroll_history[-1])
         
         self.plot_histogram(final_bankrolls, num_simulations)
         return final_bankrolls
 
-    def plot_histogram(self, final_bankrolls, num_simulations):
+    def plot_histogram(self, final_bankrolls, num_simulations, thre = 10):
         """
         Plots a histogram of final bankrolls to visualize the outcome distribution,
         excluding outliers based on the interquartile range (IQR).
