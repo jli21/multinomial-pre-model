@@ -127,15 +127,15 @@ clf = XGBClassifier(learning_rate = 0.02, max_depth = 7, min_child_weight = 6, n
 Y_prob = xgboost_def(clf, X_train, Y_train, X_test, Y_test, 10)
 
 def kelly_bet_size(prob, returns, alpha):
-    bet_size = alpha * ((prob * (returns - 1)) - (1 - prob)) / (returns - 1)
+    bet_size = alpha * ((prob * (returns)) - (1 - prob)) / (returns)
     return max(0, bet_size)
 
 def preprocess_odds(odds_df, cols):
     def american_to_decimal(american_odds):
         if american_odds > 0:
-            return (american_odds / 100) + 1
+            return (american_odds / 100) 
         else:
-            return (100 / abs(american_odds)) + 1
+            return (100 / abs(american_odds)) 
     
     for col in odds_df.columns:
         odds_df[col] = odds_df[col].apply(american_to_decimal)
@@ -160,26 +160,35 @@ def prep_simulation(Y_prob, Y_test, time_data, returns, factor):
         game_id, home_status = idx
         start_time = row['datetime']
         end_time = row['endtime']
+
+        odds = row[returns.columns].max()
+        implied_prob = 1 / odds
+        adjusted_implied_prob = implied_prob / (1 + implied_prob)
         
-        prep_dict[(game_id, 1)] = {
-            'datetime': start_time,
-            'home_status': home_status,
-            'prob': row['Y_prob'],
-            'kelly_bet': row['kelly_bet'],
-            'status': row['y.status'],
-            'odd': row[returns.columns].max() - 1,
-            'return': (row[returns.columns].max() - 1) * row['y.status'] * row['kelly_bet']
-        }
+        if row['kelly_bet'] > 0:
+
+            prep_dict[(game_id, 1)] = {
+                'datetime': start_time,
+                'home_status': home_status,
+                'prob': row['Y_prob'],
+                'kelly_bet': row['kelly_bet'],
+                'status': row['y.status'],
+                'odd': odds,
+                'return': (odds) * row['y.status'] * row['kelly_bet'],
+                'implied_prob': adjusted_implied_prob
+            }
         
-        prep_dict[(game_id, 0)] = {
-            'datetime': end_time,
-            'home_status': home_status,
-            'prob': row['Y_prob'],
-            'kelly_bet': row['kelly_bet'],
-            'status': row['y.status'],
-            'odd': row[returns.columns].max() - 1,
-            'return': (row[returns.columns].max() - 1) * row['y.status'] * row['kelly_bet']
-        }
+            prep_dict[(game_id, 0)] = {
+                'datetime': end_time,
+                'home_status': home_status,
+                'prob': row['Y_prob'],
+                'kelly_bet': row['kelly_bet'],
+                'status': row['y.status'],
+                'odd': odds,
+                'return': (odds) * row['y.status'] * row['kelly_bet'],
+                'implied_prob': adjusted_implied_prob
+            }
+
     prep_df = pd.DataFrame.from_dict(prep_dict, orient='index').sort_values(by='datetime')
     return prep_df
 
@@ -222,3 +231,5 @@ def plot_bankroll(df):
     plt.title('Bankroll Over Time')
     plt.legend()
     plt.show()
+
+plot_bankroll(pd.DataFrame(res_dict).T)
