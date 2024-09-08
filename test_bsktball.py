@@ -217,19 +217,58 @@ def find_total(dict_returns):
                 dict_returns[k]['total'] = dict_returns[k]['pre_total'] + dict_returns[(k[0], 1)]['pre_total'] * (dict_returns[k]['return'] + dict_returns[k]['kelly_bet'])
     return dict_returns
 
-odds_df = pd.read_csv(r"bsktball\returns\odds_raw.csv", index_col = [0,1])
+odds_df = pd.read_csv("bsktball/returns/odds_raw.csv", index_col = [0,1])
 returns = preprocess_odds(odds_df, ['Unibet', 'bet365'])
 
 prep_df = prep_simulation(Y_prob, Y_test, time_id, returns, factor=0.2)
 res_dict = find_total(prep_df.to_dict('index'))
 
 def plot_bankroll(df):
+    if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
+        df['datetime'] = pd.to_datetime(df['datetime'])
+
+    df.set_index('datetime', inplace=True)
+    daily_data = df['total'].resample('D').mean()
     plt.figure(figsize=(10, 6))
-    plt.plot(df['datetime'], df['total'], label='Bankroll', color='blue')
+
+    plt.plot(daily_data.index, daily_data.values, label='Bankroll', color='blue')
+    plt.gcf().autofmt_xdate() 
     plt.xlabel('Time')
     plt.ylabel('Bankroll')
     plt.title('Bankroll Over Time')
     plt.legend()
+    plt.tight_layout() 
     plt.show()
 
-plot_bankroll(pd.DataFrame(res_dict).T)
+res = pd.DataFrame(res_dict).T
+plot_bankroll(res)
+
+
+# SIMULATION 
+
+def generate_y_test(y_prob_df):
+    y_test_dict = {}
+
+    for game_id, group in y_prob_df.groupby(level=0):
+        prob_0 = group.loc[(game_id, 0), 'Y_prob']
+        prob_1 = group.loc[(game_id, 1), 'Y_prob']
+        
+        result_0 = np.random.choice([1, 0], p=[prob_0, 1 - prob_0])
+        result_1 = 1 - result_0  
+        y_test_dict[(game_id, 0)] = result_0
+        y_test_dict[(game_id, 1)] = result_1
+
+    y_test_series = pd.Series(y_test_dict)
+    y_test_series.index = pd.MultiIndex.from_tuples(y_test_series.index, names=['game_id', 'homeStatus'])
+    y_test_series.name = 'y.status'
+
+    return y_test_series
+
+def run_single_simulation(y_prob_df, time_data, returns_df, factor):
+    Y_test = generate_y_test(y_prob_df) 
+    prep_df = prep_simulation(y_prob_df, Y_test, time_data, returns_df, factor)  
+    res_dict = find_total(prep_df.to_dict('index'))  
+    return pd.DataFrame(res_dict).T
+
+res = run_single_simulation(Y_prob, time_id, returns, 0.2)
+plot_bankroll(res)
