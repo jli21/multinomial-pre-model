@@ -7,8 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score
 
-from xgboost import XGBClassifier
-
+from model import * 
 
 def combine_df(folder_name='bsktball', columns_selected=None, drop_na=True):
     """
@@ -85,31 +84,6 @@ def split_data(df, train_years, test_year, shuffle=False):
     
     return X_train, X_test, Y_train, Y_test
 
-def xgboost_def(clf, X_train, Y_train, X_test, Y_test, cv_value):
-    model = clf.fit(X_train, Y_train)
-    calibrated_clf = CalibratedClassifierCV(clf, cv = cv_value)
-    calibrated_clf.fit(X_train, Y_train)
-
-    Y_pred_prob_adj = calibrated_clf.predict_proba(X_test)[:, 1]
-    Y_train_pred_adj = calibrated_clf.predict_proba(X_train)[:, 1]
-    Y_train_pred = Y_train_pred_adj/(np.repeat(Y_train_pred_adj[0::2] + Y_train_pred_adj[1::2], 2))
-    Y_pred_prob = Y_pred_prob_adj/(np.repeat(Y_pred_prob_adj[0::2] + Y_pred_prob_adj[1::2], 2))
-    
-    Y_pred = [1 if p > 0.5 else 0 for p in Y_pred_prob]
-    Y_train_pred = [1 if p > 0.5 else 0 for p in Y_train_pred]
-    print(pd.DataFrame(data = list(model.feature_importances_), index = list(X_train.columns), columns = ["score"]).sort_values(by = "score", ascending = False).head(30))
-    Y_test = Y_test.dropna()
-    if Y_test.size == 0: 
-        print("\nTest Accuracy is not available")
-    elif len(Y_test) == len(Y_pred):
-        acc = accuracy_score(Y_test, Y_pred)
-        print("\nTest Accuracy is %s"%(acc))
-    else:
-        acc = accuracy_score(Y_test, Y_pred[:len(Y_test)])
-        print("\nTest Accuracy is %s"%(acc))
-    print("Train Accuracy is %.3f" %accuracy_score(Y_train, Y_train_pred))
-    return pd.DataFrame(index = X_test.index, data = Y_pred_prob, columns = ['Y_prob'])
-
 columns_selected = ['y.status', 'season', 'Marathonbet', '1xBet', 'Pinnacle', 'Unibet', 
                     'William Hill', 'team.elo.booker.lm', 'opp.elo.booker.lm', 'team.elo.booker.combined', 
                     'opp.elo.booker.combined', 'elo.prob', 'predict.prob.booker', 'predict.prob.combined', 
@@ -119,12 +93,90 @@ df = combine_df(columns_selected=columns_selected)
 time_id = combine_df(columns_selected=['datetime', 'endtime'])
 df = prep_data(df)
 
-train_years = [2020,2021]
-test_year = [2022]
+train_years = [2021,2022]
+test_year = [2023]
 X_train, X_test, Y_train, Y_test = split_data(df, train_years, test_year, False)
 
-clf = XGBClassifier(learning_rate = 0.02, max_depth = 7, min_child_weight = 6, n_estimators = 150)
-Y_prob = xgboost_def(clf, X_train, Y_train, X_test, Y_test, 10)
+def binary_classifier(clf, X_train, Y_train, X_test, Y_test, cv_value, normalize_probs=True):
+    clf.fit(X_train, Y_train)
+    
+    calibrated_clf = CalibratedClassifierCV(clf, cv=cv_value)
+    calibrated_clf.fit(X_train, Y_train)
+    
+    Y_train_pred_adj = calibrated_clf.predict_proba(X_train)[:, 1]
+    Y_pred_prob_adj = calibrated_clf.predict_proba(X_test)[:, 1]
+    
+    if normalize_probs:
+        Y_train_pred = Y_train_pred_adj / (np.repeat(Y_train_pred_adj[0::2] + Y_train_pred_adj[1::2], 2))
+        Y_pred_prob = Y_pred_prob_adj / (np.repeat(Y_pred_prob_adj[0::2] + Y_pred_prob_adj[1::2], 2))
+    else:
+        Y_train_pred = Y_train_pred_adj
+        Y_pred_prob = Y_pred_prob_adj
+    
+    Y_pred = [1 if p > 0.5 else 0 for p in Y_pred_prob]
+    Y_train_pred_bin = [1 if p > 0.5 else 0 for p in Y_train_pred]
+    
+    if hasattr(clf, 'feature_importances_'):
+        feature_importances = clf.feature_importances_
+        print(pd.DataFrame(data=feature_importances, index=X_train.columns, columns=["score"]).sort_values(by="score", ascending=False).head(30))
+    else:
+        print("Model does not have feature_importances_ attribute.")
+    
+    Y_test = Y_test.dropna()
+    if Y_test.size == 0:
+        print("\nTest Accuracy is not available")
+    elif len(Y_test) == len(Y_pred):
+        acc = accuracy_score(Y_test, Y_pred)
+        print("\nTest Accuracy is %s" % (acc))
+    else:
+        acc = accuracy_score(Y_test, Y_pred[:len(Y_test)])
+        print("\nTest Accuracy is %s" % (acc))
+    
+    print("Train Accuracy is %.3f" % accuracy_score(Y_train, Y_train_pred_bin))
+    return pd.DataFrame(index=X_test.index, data=Y_pred_prob, columns=['Y_prob'])
+
+clf = get_classifier(
+    model_name =       'xgboost',
+    learning_rate =     0.02,
+    max_depth =         7,
+    min_child_weight =  6,
+    n_estimators =      150
+)
+
+clf = get_classifier(
+    model_name =        'lightgbm',
+    learning_rate =      0.02,
+    max_depth =          7,
+    min_child_samples =  6,  
+    n_estimators =       150
+)
+
+clf = get_classifier(
+    model_name =        'logistic_regression',
+    C =                  1.0,              
+    penalty =           'l2',       
+    solver =            'lbfgs',     
+    max_iter =           100         
+)
+
+clf = get_classifier(
+    model_name =        'random_forest',
+    n_estimators =       150,
+    max_depth =          7,
+    min_samples_split =  6,
+    min_samples_leaf =   3,
+    bootstrap =         True
+)
+
+clf = get_classifier(
+    model_name =        'gradient_boosting',
+    learning_rate =      0.02,
+    max_depth =          7,
+    min_samples_split =  6,
+    n_estimators =       150
+)
+
+Y_prob = binary_classifier(clf, X_train, Y_train, X_test, Y_test, 10)
 
 def kelly_bet_size(prob, returns, alpha):
     bet_size = alpha * ((prob * (returns)) - (1 - prob)) / (returns)
@@ -270,5 +322,5 @@ def run_single_simulation(y_prob_df, time_data, returns_df, factor):
     res_dict = find_total(prep_df.to_dict('index'))  
     return pd.DataFrame(res_dict).T
 
-res = run_single_simulation(Y_prob, time_id, returns, 0.2)
-plot_bankroll(res)
+res_sim = run_single_simulation(Y_prob, time_id, returns, 0.2)
+plot_bankroll(res_sim)
