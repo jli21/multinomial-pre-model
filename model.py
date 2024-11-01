@@ -38,8 +38,20 @@ def get_classifier(model_name, **kwargs):
     elif model_name == 'gradient_boosting':
         from sklearn.ensemble import GradientBoostingClassifier
         clf = GradientBoostingClassifier(**kwargs)
+
+    elif model_name == 'neural_network':
+        from tensorflow.keras.models import Sequential
+        from tensorflow.keras.layers import Dense
+
+        clf = Sequential()
+        clf.add(Dense(kwargs.get('hidden_units_1', 64), input_dim=kwargs.get('input_dim', 10), activation='relu'))
+        clf.add(Dense(kwargs.get('hidden_units_2', 32), activation='relu'))
+        clf.add(Dense(1, activation='sigmoid'))  
         
+        clf.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
     else:
-        raise ValueError(f"Model '{model_name}' is not supported. Choose from 'xgboost', 'lightgbm', 'logistic_regression', 'random_forest', 'svc', 'gradient_boosting', etc.")
-    
+        raise ValueError(f"Model '{model_name}' is not supported. Choose from 'xgboost', 'lightgbm', 'logistic_regression', 'random_forest', 'svc', 'gradient_boosting', 'neural_network'.")
+
+        
     return clf

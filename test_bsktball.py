@@ -84,18 +84,33 @@ def split_data(df, train_years, test_year, shuffle=False):
     
     return X_train, X_test, Y_train, Y_test
 
-columns_selected = ['y.status', 'season', 'Marathonbet', '1xBet', 'Pinnacle', 'Unibet', 
-                    'William Hill', 'team.elo.booker.lm', 'opp.elo.booker.lm', 'team.elo.booker.combined', 
-                    'opp.elo.booker.combined', 'elo.prob', 'predict.prob.booker', 'predict.prob.combined', 
-                    'elo.court30.prob', 'raptor.court30.prob', 'booker_odds.Pinnacle', 'elo_prob', 'raptor_prob']
+def split_data_nn(df, train_years, val_year, test_year):
+    """
+    Split the dataframe into training, validation, and testing sets based on specified seasons.
 
-df = combine_df(columns_selected=columns_selected)
-time_id = combine_df(columns_selected=['datetime', 'endtime'])
-df = prep_data(df)
+    Parameters:
+    df (pd.DataFrame): The input dataframe.
+    train_years (list): List of seasons to be used for training.
+    val_year (int): The season to be used for validation.
+    test_year (int): The season to be used for testing.
 
-train_years = [2021,2022]
-test_year = [2023]
-X_train, X_test, Y_train, Y_test = split_data(df, train_years, test_year, False)
+    Returns:
+    Tuple of (X_train, X_val, X_test, Y_train, Y_val, Y_test)
+    """
+    train_df = df[df['season'].isin(train_years)]
+    val_df = df[df['season'].isin(val_year)]
+    test_df = df[df['season'].isin(test_year)]
+
+    X_train = train_df.drop(columns=['y.status', 'season'])
+    Y_train = train_df['y.status']
+
+    X_val = val_df.drop(columns=['y.status', 'season'])
+    Y_val = val_df['y.status']
+
+    X_test = test_df.drop(columns=['y.status', 'season'])
+    Y_test = test_df['y.status']
+
+    return X_train, X_val, X_test, Y_train, Y_val, Y_test
 
 def binary_classifier(clf, X_train, Y_train, X_test, Y_test, cv_value, normalize_probs=True):
     clf.fit(X_train, Y_train)
@@ -118,7 +133,7 @@ def binary_classifier(clf, X_train, Y_train, X_test, Y_test, cv_value, normalize
     
     if hasattr(clf, 'feature_importances_'):
         feature_importances = clf.feature_importances_
-        print(pd.DataFrame(data=feature_importances, index=X_train.columns, columns=["score"]).sort_values(by="score", ascending=False).head(30))
+        print(pd.DataFrame(data = feature_importances, index = X_train.columns, columns=["score"]).sort_values(by="score", ascending=False).head(30))
     else:
         print("Model does not have feature_importances_ attribute.")
     
@@ -135,48 +150,22 @@ def binary_classifier(clf, X_train, Y_train, X_test, Y_test, cv_value, normalize
     print("Train Accuracy is %.3f" % accuracy_score(Y_train, Y_train_pred_bin))
     return pd.DataFrame(index=X_test.index, data=Y_pred_prob, columns=['Y_prob'])
 
-clf = get_classifier(
-    model_name =       'xgboost',
-    learning_rate =     0.02,
-    max_depth =         7,
-    min_child_weight =  6,
-    n_estimators =      150
-)
+def binary_classifier_nn(clf, X_train, Y_train, X_test, Y_test, 
+                         epochs = 10, batch_size = 32, validation_data = None):
 
-clf = get_classifier(
-    model_name =        'lightgbm',
-    learning_rate =      0.02,
-    max_depth =          7,
-    min_child_samples =  6,  
-    n_estimators =       150
-)
+    clf.fit(X_train, Y_train, epochs=epochs, batch_size=batch_size, validation_data=validation_data)
 
-clf = get_classifier(
-    model_name =        'logistic_regression',
-    C =                  1.0,              
-    penalty =           'l2',       
-    solver =            'lbfgs',     
-    max_iter =           100         
-)
+    Y_train_pred_adj = clf.predict(X_train).flatten()
+    Y_pred_prob_adj = clf.predict(X_test).flatten()
 
-clf = get_classifier(
-    model_name =        'random_forest',
-    n_estimators =       150,
-    max_depth =          7,
-    min_samples_split =  6,
-    min_samples_leaf =   3,
-    bootstrap =         True
-)
+    Y_pred = [1 if p > 0.5 else 0 for p in Y_pred_prob_adj]
+    Y_train_pred_bin = [1 if p > 0.5 else 0 for p in Y_train_pred_adj]
 
-clf = get_classifier(
-    model_name =        'gradient_boosting',
-    learning_rate =      0.02,
-    max_depth =          7,
-    min_samples_split =  6,
-    n_estimators =       150
-)
+    if not Y_test.empty and len(Y_test) == len(Y_pred):
+        print(f"\nTest Accuracy: {accuracy_score(Y_test, Y_pred):.3f}")
+    print(f"Train Accuracy: {accuracy_score(Y_train, Y_train_pred_bin):.3f}")
 
-Y_prob = binary_classifier(clf, X_train, Y_train, X_test, Y_test, 10)
+    return pd.DataFrame(index = X_test.index, data=Y_pred_prob_adj, columns=['Y_prob'])
 
 def kelly_bet_size(prob, returns, alpha):
     bet_size = alpha * ((prob * (returns)) - (1 - prob)) / (returns)
@@ -269,12 +258,6 @@ def find_total(dict_returns):
                 dict_returns[k]['total'] = dict_returns[k]['pre_total'] + dict_returns[(k[0], 1)]['pre_total'] * (dict_returns[k]['return'] + dict_returns[k]['kelly_bet'])
     return dict_returns
 
-odds_df = pd.read_csv("bsktball/returns/odds_raw.csv", index_col = [0,1])
-returns = preprocess_odds(odds_df, ['Unibet', 'bet365'])
-
-prep_df = prep_simulation(Y_prob, Y_test, time_id, returns, factor=0.2)
-res_dict = find_total(prep_df.to_dict('index'))
-
 def plot_bankroll(df):
     if not pd.api.types.is_datetime64_any_dtype(df['datetime']):
         df['datetime'] = pd.to_datetime(df['datetime'])
@@ -291,10 +274,6 @@ def plot_bankroll(df):
     plt.legend()
     plt.tight_layout() 
     plt.show()
-
-res = pd.DataFrame(res_dict).T
-plot_bankroll(res)
-
 
 # SIMULATION 
 
@@ -322,5 +301,3 @@ def run_single_simulation(y_prob_df, time_data, returns_df, factor):
     res_dict = find_total(prep_df.to_dict('index'))  
     return pd.DataFrame(res_dict).T
 
-res_sim = run_single_simulation(Y_prob, time_id, returns, 0.2)
-plot_bankroll(res_sim)

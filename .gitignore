@@ -18,3 +18,8 @@ Thumbs.db
 # Logs
 *.log
 
+.idea/vcs.xml
+.idea/multinomial-pre-model.iml
+.idea/modules.xml
+.idea/misc.xml
+.idea/inspectionProfiles/profiles_settings.xml
